@@ -62,15 +62,19 @@ class mem_root_deque {
   mem_root_deque(InputIt first, InputIt last, MEM_ROOT *mem_root)
       : list_(first, last, Mem_root_allocator<T>(mem_root)) {}
 
-  mem_root_deque(const mem_root_deque &other) : list_(other.list_) {}
+  // Copy constructor: explicitly propagate allocator from source so that
+  // container operations which compare allocators (sort/merge/splice)
+  // remain valid.
+  mem_root_deque(const mem_root_deque &other)
+      : list_(other.list_, other.list_.get_allocator()) {}
 
   mem_root_deque(const mem_root_deque &other, MEM_ROOT *mem_root)
       : list_(other.list_, Mem_root_allocator<T>(mem_root)) {}
 
+  // Move constructor: explicitly construct with other's allocator so that
+  // allocator pointer (MEM_ROOT*) is preserved.
   mem_root_deque(mem_root_deque &&other) noexcept
-      : list_(std::move(other.list_)) {
-    other.list_.clear();
-  }
+      : list_(std::move(other.list_), other.list_.get_allocator()) {}
 
   mem_root_deque(mem_root_deque &&other, MEM_ROOT *mem_root)
       : list_(std::move(other.list_), Mem_root_allocator<T>(mem_root)) {}
@@ -178,14 +182,23 @@ class mem_root_deque {
 
   void reverse() { list_.reverse(); }
 
-  void merge(mem_root_deque &other) { list_.merge(other.list_); }
+  void merge(mem_root_deque &other) {
+    // Operation requires same allocator (same MEM_ROOT*); assert in debug mode.
+    assert(list_.get_allocator().memroot() ==
+           other.list_.get_allocator().memroot());
+    list_.merge(other.list_);
+  }
 
   void splice(typename deque_container::iterator pos, mem_root_deque &other) {
+    assert(list_.get_allocator().memroot() ==
+           other.list_.get_allocator().memroot());
     list_.splice(pos, other.list_);
   }
 
   void splice(typename deque_container::iterator pos, mem_root_deque &other,
               typename deque_container::iterator it) {
+    assert(list_.get_allocator().memroot() ==
+           other.list_.get_allocator().memroot());
     list_.splice(pos, other.list_, it);
   }
 
@@ -205,15 +218,34 @@ class mem_root_deque {
     return *it;               // Return the element at the given index
   }
 
-  mem_root_deque &operator=(mem_root_deque &&other) noexcept {
-    if (this != &other) {
-      list_ = std::move(other.list_);
-      other.list_.clear();  // Clear the list in the source object
+  // Copy-assignment: create a temporary container constructed with the
+  // source allocator, then swap. This guarantees allocator propagation.
+  mem_root_deque &operator=(const mem_root_deque &arg) {
+    if (this != &arg) {
+      deque_container tmp(arg.list_, arg.list_.get_allocator());
+      list_.swap(tmp);
     }
     return *this;
   }
 
-  mem_root_deque &operator=(const mem_root_deque &arg) = default;
+  // Move-assignment: construct a temporary with other's allocator and move the
+  // contents into it, then swap. This preserves the allocator pointer.
+  mem_root_deque &operator=(mem_root_deque &&other) noexcept {
+    if (this != &other) {
+      if (list_.get_allocator() == other.list_.get_allocator()) {
+        list_ = std::move(other.list_);
+      } else {
+        // rebuild the list with the same allocator to ensure sort safety
+        deque_container tmp(std::move(other.list_), list_.get_allocator());
+        list_.swap(tmp);
+      }
+      other.list_.clear();
+    }
+    return *this;
+  }
+
+  // Accessor for allocator (useful for tests / debugging)
+  Mem_root_allocator<T> get_allocator() const { return list_.get_allocator(); }
 };
 
 #endif  // MEM_ROOT_DEQUE_H

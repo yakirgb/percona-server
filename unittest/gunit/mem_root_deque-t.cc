@@ -265,6 +265,95 @@ TEST(MemRootDequeTest, ConvertIterators) {
   mem_root_deque<int>::const_iterator j{i};
 }
 
+TEST(MemRootDequeTest, CopyPropagatesAllocator) {
+  MEM_ROOT root;
+
+  mem_root_deque<std::string> a(&root);
+  a.push_back("one");
+  a.push_back("two");
+
+  mem_root_deque<std::string> b = a;  // copy constructor
+
+  EXPECT_EQ(a.get_allocator().memroot(), b.get_allocator().memroot());
+
+  b.sort();    // should not abort
+  a.merge(b);  // should not abort (both share same mem_root)
+}
+
+TEST(MemRootDequeTest, MovePropagatesAllocator) {
+  MEM_ROOT root;
+
+  mem_root_deque<std::string> a(&root);
+  a.push_back("z");
+  a.push_back("a");
+
+  mem_root_deque<std::string> b = std::move(a);  // move constructor
+
+  EXPECT_EQ(b.get_allocator().memroot(), &root);
+
+  b.sort();  // should not abort
+}
+
+TEST(MemRootDequeTest, CopyAssignmentPropagatesAllocatorAcrossRoots) {
+  MEM_ROOT root1;
+  MEM_ROOT root2;
+
+  mem_root_deque<std::string> a(&root1);
+  a.push_back("x");
+  a.push_back("y");
+
+  mem_root_deque<std::string> b(&root2);
+  b.push_back("old");
+
+  b = a;  // copy assignment, allocator should propagate from a
+
+  EXPECT_NE(b.get_allocator().memroot(), a.get_allocator().memroot());
+  b.sort();
+}
+
+TEST(MemRootDequeTest, MoveAssignmentPropagatesAllocatorAcrossRoots) {
+  MEM_ROOT root1;
+  MEM_ROOT root2;
+
+  mem_root_deque<std::string> a(&root1);
+  a.push_back("c");
+  a.push_back("b");
+  a.push_back("a");
+
+  mem_root_deque<std::string> b(&root2);
+  b.push_back("zzz");
+
+  b = std::move(a);  // move assignment
+
+  EXPECT_EQ(b.get_allocator().memroot(), &root2);
+  b.sort();  // should not abort
+}
+
+TEST(MemRootDequeTest, SwapDifferentRoots) {
+  MEM_ROOT root1;
+  MEM_ROOT root2;
+
+  mem_root_deque<std::string> a(&root1);
+  mem_root_deque<std::string> b(&root2);
+
+  a.push_back("banana");
+  a.push_back("apple");
+  b.push_back("zzz");
+
+  std::swap(a, b);
+
+  // Allocators themselves are not swapped
+  EXPECT_EQ(a.get_allocator().memroot(), &root1);
+  EXPECT_EQ(b.get_allocator().memroot(), &root2);
+
+  // Sorting both containers should still work fine
+  a.sort();
+  b.sort();
+
+  EXPECT_EQ(a.size(), 1U);
+  EXPECT_EQ(b.size(), 2U);
+}
+
 // Microbenchmarks.
 
 template <class T>
